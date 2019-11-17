@@ -24,6 +24,13 @@
 #include "trace.h"
 #include "pmu.h"
 
+atomic64_t exit_counter;
+EXPORT_SYMBOL(exit_counter);
+atomic64_t exit_array[65];
+EXPORT_SYMBOL(exit_array);
+atomic64_t time_for_exit_all;
+EXPORT_SYMBOL(time_for_exit_all);
+
 static u32 xstate_required_size(u64 xstate_bv, bool compacted)
 {
 	int feature_bit = 0;
@@ -1020,7 +1027,8 @@ out:
 EXPORT_SYMBOL_GPL(kvm_cpuid);
 
 int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
-{
+{	
+	int exit_reason = 0;
 	u32 eax, ebx, ecx, edx;
 
 	if (cpuid_fault_enabled(vcpu) && !kvm_require_cpl(vcpu, 0))
@@ -1028,7 +1036,36 @@ int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
 
 	eax = kvm_rax_read(vcpu);
 	ecx = kvm_rcx_read(vcpu);
-	kvm_cpuid(vcpu, &eax, &ebx, &ecx, &edx, true);
+	
+	if (eax == 0x4FFFFFFF)
+	{
+		eax = atomic64_read(&exit_counter);
+		ecx = 0x00;
+		edx = 0x00;
+		ebx = 0x00;
+		
+	}
+	else if (eax == 0x4FFFFFFD)
+	{	
+		exit_reason = ecx;
+		eax = atomic64_read(&exit_array[exit_reason]);
+		edx = 0x00;
+		ebx = 0x00;	
+	}
+	else if (eax == 0x4FFFFFFE)
+	{
+		u32 high; 
+		u32 low;
+		high = (u32)((atomic64_read(&time_for_exit_all) & 0xFFFFFFFF00000000LL) >> 32);
+		low = (u32)(atomic64_read(&time_for_exit_all) & 0xFFFFFFFFLL);
+		ebx = high;
+		ecx = low;
+		edx = 0x00;
+	}		
+	else
+	{
+		kvm_cpuid(vcpu, &eax, &ebx, &ecx, &edx, true);
+	}
 	kvm_rax_write(vcpu, eax);
 	kvm_rbx_write(vcpu, ebx);
 	kvm_rcx_write(vcpu, ecx);
