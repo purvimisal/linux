@@ -62,8 +62,9 @@
 #include "x86.h"
 
 extern atomic64_t exit_counter;
-extern atomic64_t exit_array[65];
+extern atomic64_t exit_array[67];
 extern atomic64_t time_for_exit_all;
+extern atomic64_t time_for_exit_array[67];
 
 
 MODULE_AUTHOR("Qumranet");
@@ -5862,14 +5863,15 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 {	
 	u64 time_at_entry;
 	u64 time_at_exit;
+	u64 entry_;
+	u64 exit_;
 	time_at_entry = rdtsc();
+	entry_ = rdtsc();
 	atomic64_inc(&exit_counter);
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	u32 exit_reason = vmx->exit_reason;
 	u32 vectoring_info = vmx->idt_vectoring_info;
-	
-	atomic64_inc(&exit_array[exit_reason]);
-	
+	int temp;
 
 	trace_kvm_exit(exit_reason, vcpu, KVM_ISA_VMX);
 
@@ -5886,14 +5888,16 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	/* If guest state is invalid, start emulating */
 	if (vmx->emulation_required){
 		time_at_exit = rdtsc();
+		temp = handle_invalid_guest_state(vcpu);
 		atomic64_add(time_at_exit - time_at_entry, &time_for_exit_all);
-		return handle_invalid_guest_state(vcpu);
+		return temp;
 	}
 
 	if (is_guest_mode(vcpu) && nested_vmx_exit_reflected(vcpu, exit_reason)) {
 		time_at_exit = rdtsc();
-		atomic64_add(time_at_exit - time_at_entry, &time_for_exit_all);
-		return nested_vmx_reflect_vmexit(vcpu, exit_reason);
+		temp = nested_vmx_reflect_vmexit(vcpu, exit_reason);
+		atomic64_add(time_at_exit - time_at_entry, &time_for_exit_all);		
+		return temp;
 	}
 
 	if (exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY) {
@@ -5967,7 +5971,16 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	    && kvm_vmx_exit_handlers[exit_reason]){
 		time_at_exit = rdtsc();
 		atomic64_add(time_at_exit - time_at_entry, &time_for_exit_all);
-		return kvm_vmx_exit_handlers[exit_reason](vcpu);
+		exit_ = rdtsc();
+		temp = kvm_vmx_exit_handlers[exit_reason](vcpu);
+		if(exit_reason == EXIT_REASON_RDRAND || exit_reason == EXIT_REASON_RDSEED || exit_reason == EXIT_REASON_XSAVES || exit_reason == EXIT_REASON_XRSTORS || exit_reason == EXIT_REASON_UMWAIT || exit_reason == EXIT_REASON_TPAUSE) {
+			atomic64_add(-1, &time_for_exit_array[exit_reason]);		
+		}
+		else {
+			atomic64_inc(&exit_array[exit_reason]);	
+			atomic64_add(exit_ - entry_ , &time_for_exit_array[exit_reason]);
+		}	
+		return temp;
 	}
 	else {
 		vcpu_unimpl(vcpu, "vmx: unexpected exit reason 0x%x\n",
@@ -5980,6 +5993,8 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->internal.data[0] = exit_reason;
 		time_at_exit = rdtsc();
 		atomic64_add(time_at_exit - time_at_entry, &time_for_exit_all);
+		atomic64_add(-1, &exit_array[exit_reason]);
+		atomic64_add(-1, &time_for_exit_array[exit_reason]);
 		return 0;
 	}
 }

@@ -26,10 +26,12 @@
 
 atomic64_t exit_counter;
 EXPORT_SYMBOL(exit_counter);
-atomic64_t exit_array[65];
+atomic64_t exit_array[67];
 EXPORT_SYMBOL(exit_array);
 atomic64_t time_for_exit_all;
 EXPORT_SYMBOL(time_for_exit_all);
+atomic64_t time_for_exit_array[67];
+EXPORT_SYMBOL(time_for_exit_array);
 
 static u32 xstate_required_size(u64 xstate_bv, bool compacted)
 {
@@ -1048,9 +1050,24 @@ int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
 	else if (eax == 0x4FFFFFFD)
 	{	
 		exit_reason = ecx;
-		eax = atomic64_read(&exit_array[exit_reason]);
-		edx = 0x00;
-		ebx = 0x00;	
+		if(exit_reason > 67 || exit_reason == 35 || exit_reason == 38 || exit_reason == 42){
+			eax = 0x00;
+			ebx = 0x00;
+			ecx = 0x00;
+			edx = 0xFFFFFFFF;
+		}		
+		else if(atomic64_read(&exit_array[exit_reason]) < 0){
+			eax = 0x00;
+			ebx = 0x00;
+			ecx = 0x00;
+			edx = 0x00;
+		}
+		else {
+			eax = atomic64_read(&exit_array[exit_reason]);
+			edx = 0x00;
+			ebx = 0x00;
+			ecx = 0x00;
+		}	
 	}
 	else if (eax == 0x4FFFFFFE)
 	{
@@ -1061,6 +1078,32 @@ int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
 		ebx = high;
 		ecx = low;
 		edx = 0x00;
+	}
+	else if (eax == 0x4FFFFFFC)
+	{
+		exit_reason = ecx;
+		u32 high; 
+		u32 low;
+		if(exit_reason > 68){
+			eax = 0x00;
+			ebx = 0x00;
+			ecx = 0x00;
+			edx = 0xFFFFFFFF;
+		}
+		else if(atomic64_read(&time_for_exit_array[exit_reason]) < 0){
+			eax = 0x00;
+			ebx = 0x00;
+			ecx = 0x00;
+			edx = 0x00;
+		}
+		else {
+			high = (u32)((atomic64_read(&time_for_exit_array[exit_reason]) & 0xFFFFFFFF00000000LL) >> 32);
+			low = (u32)(atomic64_read(&time_for_exit_array[exit_reason]) & 0xFFFFFFFFLL);
+			ebx = high;
+			ecx = low;
+			edx = 0x00;
+			eax = 0x00;
+		}
 	}		
 	else
 	{
